@@ -1,0 +1,198 @@
+---
+title: "ESM 244 Week 8: Principal Components Analysis"
+author: "Natalie Smith"
+date: "2024-02-28"
+format: 
+  html:
+    embed-resources: true
+    code-fold: true
+    toc: true
+execute:
+  warning: false
+  message: false
+---
+
+```{r setup}
+
+library(tidyverse)
+library(here)
+library(ggfortify) # For PCA biplot
+
+```
+
+# Principal components analysis (PCA)
+
+Principal components analysis is an ordination method allowing us to glean as much about our multivariate data as possible in a simplified number of dimensions.
+
+Here, we'll use [data from the Human Development Index](https://hdr.undp.org/data-center) (raw data and metadata are saved in the `data` folder in case you'd like to explore in more detail). Quick overview of the HDI:
+
+Here we are examining a selected set of variables:
+
+-   le: Life expectancy at birth
+-   gnipc: Gross per capita national income
+-   eys: Expected years of schooling
+-   mys: mean years of school
+-   ineq_le: inequality in life expectancy
+-   gii: Gender inequality index
+-   co2_prod: CO2 production per capita
+-   mf: material footprint (tonnes per capita)
+-   lat: Latitude
+
+PCA requires continuous numeric data with no NAs. So we must drop categorical and character data, and exclude any rows with NAs. We should also rescale so all numeric variables have a mean 0 and sd 1.
+
+```{r}
+hdi_data_raw <- read_csv(here('data/hdi_clean.csv')) 
+
+# glimpse(hdi_data_raw)
+# summary(hdi_data_raw)
+
+hdi_data_long <- hdi_data_raw %>%
+  pivot_longer(names_to = 'name', values_to = 'value', where(is.numeric))
+
+ggplot(hdi_data_long, aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~ name, scales = 'free_x')
+
+
+#notice the skews - PCA doesnt require normality
+```
+
+```{r}
+hdi_data <- hdi_data_raw %>%
+  drop_na() %>%
+  mutate(hdicode = factor(hdicode, levels = c('Low', 'Medium', 'High', 'Very High'))) %>%
+### making hdicode a factor, so they will appear in logical order when plotted
+  mutate(gnipc_2021 = log(gnipc_2021))
+###  why are we log transforming?  PCA does not require normality.  
+### But see HDI description - they use log gnipc for their scoring.
+
+hdi_pca <- hdi_data %>% 
+  select(where(is.numeric)) %>%
+  # select(-iso3, -country, -hdicode)) %>%
+  # select(ends_with('2021'), lat) %>%
+  prcomp(scale = TRUE)
+#rescale (recenter values so they are all in same general ballpark)
+```
+
+Examine the structure of the hdi_pca object.
+
+``` r
+List of 5
+ $ sdev    : num [1:9] 2.506 0.965 0.84 0.607 0.507 ...
+ $ rotation: num [1:9, 1:9] 0.368 0.35 0.35 0.354 -0.363 ...
+ # how much of each of these og variables are being used to construct new princ. componenet
+  ..- attr(*, "dimnames")=List of 2
+  .. ..$ : chr [1:9] "le_2021" "eys_2021" "mys_2021" "gnipc_2021" ...
+  .. ..$ : chr [1:9] "PC1" "PC2" "PC3" "PC4" ...
+ $ center  : Named num [1:9] 6.47e-16 5.95e-17 -2.46e-16 -6.75e-17 6.55e-17 ...
+  ..- attr(*, "names")= chr [1:9] "le_2021" "eys_2021" "mys_2021" "gnipc_2021" ...
+ $ scale   : Named num [1:9] 7.8 3.04 3.32 20803.92 9.94 ...
+  ..- attr(*, "names")= chr [1:9] "le_2021" "eys_2021" "mys_2021" "gnipc_2021" ...
+ $ x       : num [1:152, 1:9] -3.317 -3.012 1.014 4.156 0.582 ...
+  ..- attr(*, "dimnames")=List of 2
+  .. ..$ : NULL
+  .. ..$ : chr [1:9] "PC1" "PC2" "PC3" "PC4" ...
+ - attr(*, "class")= chr "prcomp"
+```
+
+-   `sdev` is the standard deviation (square root of explained variance captured by each principal component)
+-   `rotation` is the translation of base variables to principal components (and vice versa)
+-   `center` is the factor applied for centering of the variables
+-   `scale` is the factor for rescaling of the variables
+-   `x` is a dataframe of all observations transformed to their new values in PC1, 2, etc.
+
+# run hdi_pca$rotation in console
+
+```{r}
+# See the loadings (weighting for each principal component)
+hdi_pca$rotation
+```
+
+What can we say about the contributions of these variables to PC1, PC2, and PC3?
+
+## HARD WAY - Biplot loadings by hand
+
+First let's plot the data in its raw form, choosing a couple of key variables.
+
+```{r}
+ggplot(hdi_data) +
+  geom_point(data = hdi_data, aes(x = gnipc_2021, y = le_2021, color = hdicode)) +
+  theme_minimal()
+# as income increase, life exp. increases
+
+ggplot() +
+  geom_point(data = hdi_data, aes(x = eys_2021, y = mys_2021, color = hdicode)) +
+  theme_minimal()
+# as expected years of schooling increases, mean years of schooling increases
+```
+
+Now with biplot:
+
+```{r}
+# loadings_df <- data.frame(hdi_pca$rotation) %>%
+loadings_df <- data.frame(hdi_pca$rotation * 8) %>% ### 8x multiplier is arbitrary, to extend the length of the arrows
+  mutate(axis = row.names(.))
+
+new_pts_df <- data.frame(hdi_pca$x)
+# the x values is the transformed values in the new coord system
+
+ggplot() +
+  geom_point(data = new_pts_df, aes(x = PC1, y = PC2), 
+             color = 'blue') +
+  geom_segment(data = loadings_df,
+               x = 0, y = 0, aes(xend = PC1, yend = PC2, group = axis),
+               arrow = arrow(length = unit(.25, 'cm'))) +
+  geom_text(data = loadings_df,
+            aes(x = PC1, y = PC2, label = axis), vjust = 0, nudge_y = .01) +
+  theme_minimal()
+  
+  
+#Xend how much do principal components contributE to PC1, Yend " " PC2. 
+```
+
+Autoplot!!!
+
+```{r}
+autoplot(hdi_pca,
+     	data = hdi_data,
+     	loadings = TRUE,
+     	colour = 'hdicode',
+     	loadings.label = TRUE,
+     	loadings.colour = "black",
+     	loadings.label.colour = "black",
+     	loadings.label.vjust = -0.5
+     	) +
+  scale_color_manual(values = c('red', 'orange', 'yellowgreen', 'darkgreen')) +
+  theme_minimal()
+
+#ggrepel for the labels 
+
+# It's not perfect, but it's enough for now...
+```
+
+## Screeplot by hand
+
+first by hand, then by screeplot
+
+```{r}
+sd_vec <- hdi_pca$sdev
+var_vec <- sd_vec^2 ### standard deviation is sqrt of variance!
+pc_names <- colnames(hdi_pca$rotation)
+
+pct_expl_df <- data.frame(v = var_vec,
+                          pct_v = var_vec / sum(var_vec),
+                          pc = pc_names) %>%
+  mutate(pct_lbl = paste0(round(pct_v*100, 1), '%')) 
+
+ggplot(pct_expl_df, aes(x = pc, y = v)) +
+  geom_col() +
+  geom_text(aes(label = pct_lbl), vjust = 0, nudge_y = .002) +
+  labs(x = 'Principal component', y = 'Variance explained')+
+  theme_minimal()
+```
+
+```{r}
+# Variance explained by each PC
+screeplot(hdi_pca, type = "lines")
+screeplot(hdi_pca, type = "barplot")
+```
