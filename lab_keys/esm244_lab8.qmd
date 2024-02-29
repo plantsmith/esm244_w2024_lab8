@@ -18,7 +18,6 @@ library(tidyverse)
 library(here)
 
 library(ggfortify) # For PCA biplot
-library(patchwork)
 
 ```
 
@@ -47,21 +46,28 @@ Here we are examining a selected set of variables:
 PCA requires continuous numeric data with no NAs.  So we must drop categorical and character data, and exclude any rows with NAs.  We should also rescale so all numeric variables have a mean 0 and sd 1.
 
 ```{r}
-hdi_data <- read_csv(here('data/hdi_clean.csv')) %>%
-  drop_na() %>%
-  mutate(hdicode = factor(hdicode, levels = c('Low', 'Medium', 'High', 'Very High'))) %>%
-  mutate(gnipc_2021 = log(gnipc_2021))
+hdi_data_raw <- read_csv(here('data/hdi_clean.csv')) 
 
-# glimpse(hdi_data)
+# glimpse(hdi_data_raw)
+# summary(hdi_data_raw)
 
-hdi_data2 <- hdi_data %>%
+hdi_data_long <- hdi_data_raw %>%
   pivot_longer(names_to = 'name', values_to = 'value', where(is.numeric))
 
-ggplot(hdi_data2, aes(x = value)) +
+ggplot(hdi_data_long, aes(x = value)) +
   geom_histogram() +
   facet_wrap(~ name, scales = 'free_x')
+```
 
-hdi_pca <- hdi_data %>%
+```{r}
+hdi_data <- hdi_data_raw %>%
+  drop_na() %>%
+  mutate(hdicode = factor(hdicode, levels = c('Low', 'Medium', 'High', 'Very High'))) %>%
+  ### why are we log transforming?  PCA does not require normality.  
+  ### But see HDI description - they use log gnipc for their scoring.
+  mutate(gnipc_2021 = log(gnipc_2021))
+
+hdi_pca <- hdi_data %>% 
   select(where(is.numeric)) %>%
   # select(-iso3, -country, -hdicode)) %>%
   # select(ends_with('2021'), lat) %>%
@@ -104,6 +110,18 @@ What can we say about the contributions of these variables to PC1, PC2, and PC3?
 
 ## Biplot loadings by hand
 
+First let's plot the data in its raw form, choosing a couple of key variables.
+
+```{r}
+ggplot() +
+  geom_point(data = hdi_data, aes(x = gnipc_2021, y = le_2021, color = hdicode)) +
+  theme_minimal()
+ggplot() +
+  geom_point(data = hdi_data, aes(x = eys_2021, y = mys_2021, color = hdicode)) +
+  theme_minimal()
+```
+
+Let's try this the hard way, to get an intuition about what is happening in the biplot.
 
 ```{r}
 # loadings_df <- data.frame(hdi_pca$rotation) %>%
@@ -113,7 +131,7 @@ loadings_df <- data.frame(hdi_pca$rotation * 8) %>% ### 8x multiplier is arbitra
 new_pts_df <- data.frame(hdi_pca$x)
 
 ggplot() +
-  geom_point(data = new_pts_df, aes(x = PC1, y = PC2, color = hdicode), 
+  geom_point(data = new_pts_df, aes(x = PC1, y = PC2), 
              color = 'blue') +
   geom_segment(data = loadings_df,
                x = 0, y = 0, aes(xend = PC1, yend = PC2, group = axis),
@@ -136,7 +154,6 @@ autoplot(hdi_pca,
      	loadings.label.vjust = -0.5
      	) +
   scale_color_manual(values = c('red', 'orange', 'yellowgreen', 'darkgreen')) +
-  scale_fill_manual(values = c('red', 'orange', 'yellowgreen', 'darkgreen')) +
   theme_minimal()
 
 # It's not perfect, but it's enough for now...
@@ -152,7 +169,7 @@ pc_names <- colnames(hdi_pca$rotation)
 
 pct_expl_df <- data.frame(v = var_vec,
                           pct_v = var_vec / sum(var_vec),
-                          pc = fct_inorder(pc_names)) %>%
+                          pc = pc_names) %>%
   mutate(pct_lbl = paste0(round(pct_v*100, 1), '%'))
 
 ggplot(pct_expl_df, aes(x = pc, y = v)) +
